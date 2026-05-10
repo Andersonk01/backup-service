@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { format, formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import {
@@ -45,7 +45,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
-import { mockBackupRuns } from "@/lib/mock-data"
+import { runsApi } from "@/lib/api"
 import type { BackupStatus } from "@/lib/types"
 
 function formatBytes(bytes: number): string {
@@ -93,18 +93,35 @@ export default function HistoryPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [dateFilter, setDateFilter] = useState<string>("all")
+  const [runsList, setRunsList] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const filteredRuns = mockBackupRuns.filter((run) => {
-    const matchesSearch = run.databaseName.toLowerCase().includes(searchQuery.toLowerCase())
+  useEffect(() => {
+    loadRuns()
+  }, [])
+
+  async function loadRuns() {
+    try {
+      const data = await runsApi.getAll()
+      setRunsList(data)
+    } catch (error) {
+      console.error('Error loading runs:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const filteredRuns = runsList.filter((run) => {
+    const matchesSearch = run.databaseName?.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = statusFilter === "all" || run.status === statusFilter
     return matchesSearch && matchesStatus
   })
 
-  const successCount = mockBackupRuns.filter((r) => r.status === "success").length
-  const failedCount = mockBackupRuns.filter((r) => r.status === "failed").length
-  const runningCount = mockBackupRuns.filter((r) => r.status === "running").length
+  const successCount = runsList.filter((r) => r.status === "success").length
+  const failedCount = runsList.filter((r) => r.status === "failed").length
+  const runningCount = runsList.filter((r) => r.status === "running").length
 
-  const handleDownload = (run: typeof mockBackupRuns[0]) => {
+  const handleDownload = (run: typeof runsList[0]) => {
     toast.promise(
       new Promise((resolve) => setTimeout(resolve, 2000)),
       {
@@ -115,14 +132,27 @@ export default function HistoryPage() {
     )
   }
 
-  const handleRetry = (run: typeof mockBackupRuns[0]) => {
+  const handleRetry = async (run: typeof runsList[0]) => {
     toast.promise(
-      new Promise((resolve) => setTimeout(resolve, 1500)),
+      runsApi.create(run.databaseId),
       {
         loading: `Reiniciando backup de ${run.databaseName}...`,
         success: "Backup reiniciado!",
         error: "Falha ao reiniciar",
       }
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col min-h-screen">
+        <AppHeader title="Histórico de Backups" description="Acompanhe todas as execuções de backup" />
+        <div className="flex-1 p-4 sm:p-6 lg:p-8">
+          <div className="flex items-center justify-center h-64">
+            <p className="text-muted-foreground">Carregando...</p>
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -134,7 +164,6 @@ export default function HistoryPage() {
       />
 
       <div className="flex-1 space-y-6 p-4 sm:p-6 lg:p-8">
-        {/* Stats */}
         <div className="grid gap-4 sm:grid-cols-4">
           <Card className="bg-card border-border">
             <CardContent className="flex items-center gap-4 p-4">
@@ -142,7 +171,7 @@ export default function HistoryPage() {
                 <History className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{mockBackupRuns.length}</p>
+                <p className="text-2xl font-bold text-foreground">{runsList.length}</p>
                 <p className="text-xs text-muted-foreground">Total</p>
               </div>
             </CardContent>
@@ -182,7 +211,6 @@ export default function HistoryPage() {
           </Card>
         </div>
 
-        {/* Filters */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -220,7 +248,6 @@ export default function HistoryPage() {
           </Select>
         </div>
 
-        {/* Table */}
         <Card className="bg-card border-border">
           <CardHeader>
             <CardTitle className="text-foreground">Execuções</CardTitle>
@@ -243,7 +270,7 @@ export default function HistoryPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredRuns.map((run) => {
-                    const config = statusConfig[run.status]
+                    const config = statusConfig[run.status as BackupStatus] || statusConfig.pending
                     const StatusIcon = config.icon
 
                     return (
@@ -263,9 +290,9 @@ export default function HistoryPage() {
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           <div className="flex flex-col">
-                            <span>{format(run.startedAt, "dd/MM/yyyy HH:mm", { locale: ptBR })}</span>
+                            <span>{format(new Date(run.startedAt), "dd/MM/yyyy HH:mm", { locale: ptBR })}</span>
                             <span className="text-xs">
-                              {formatDistanceToNow(run.startedAt, { addSuffix: true, locale: ptBR })}
+                              {formatDistanceToNow(new Date(run.startedAt), { addSuffix: true, locale: ptBR })}
                             </span>
                           </div>
                         </TableCell>
@@ -323,14 +350,14 @@ export default function HistoryPage() {
                                     <div>
                                       <p className="text-sm text-muted-foreground">Início</p>
                                       <p className="font-medium text-foreground">
-                                        {format(run.startedAt, "dd/MM/yyyy HH:mm:ss", { locale: ptBR })}
+                                        {format(new Date(run.startedAt), "dd/MM/yyyy HH:mm:ss", { locale: ptBR })}
                                       </p>
                                     </div>
                                     <div>
                                       <p className="text-sm text-muted-foreground">Término</p>
                                       <p className="font-medium text-foreground">
                                         {run.finishedAt
-                                          ? format(run.finishedAt, "dd/MM/yyyy HH:mm:ss", { locale: ptBR })
+                                          ? format(new Date(run.finishedAt), "dd/MM/yyyy HH:mm:ss", { locale: ptBR })
                                           : "-"}
                                       </p>
                                     </div>

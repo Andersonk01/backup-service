@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: backup-service-pg
+    environment:
+      POSTGRES_USER: backup_service
+      POSTGRES_PASSWORD: backup_service_dev
+      POSTGRES_DB: backup_service
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U backup_service -d backup_service"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

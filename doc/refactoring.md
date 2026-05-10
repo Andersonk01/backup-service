@@ -95,3 +95,9 @@ Variáveis a documentar quando o backend existir (nomes ilustrativos):
 | Data       | Mudança |
 |------------|---------|
 | 2026-05-04 | Reestruturado: estado atual, épicos, checklist de tasks, referência de env, item de repo/higiene. |
+| 2026-05-10 | Implementado Prisma ORM, schema e migrations |
+| 2026-05-10 | Criadas API Routes REST (CRUD databases, jobs, runs, stats) |
+| 2026-05-10 | Conectada UI ao backend real (dashboard, bancos, histórico) |
+| 2026-05-10 | Criado worker de backup com pg_dump (scripts/backup-worker.ts) |
+| 2026-05-10 | Adicionado docker-compose.yml para PostgreSQL 16 |
+| 2026-05-10 | Adicionado cleanup de arquivos órfãos e auto-refresh do dashboard |

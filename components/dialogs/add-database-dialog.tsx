@@ -22,8 +22,13 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "sonner"
+import { databasesApi } from "@/lib/api"
 
-export function AddDatabaseDialog() {
+interface AddDatabaseDialogProps {
+  onDatabaseAdded?: () => void
+}
+
+export function AddDatabaseDialog({ onDatabaseAdded }: AddDatabaseDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -41,21 +46,25 @@ export function AddDatabaseDialog() {
     e.preventDefault()
     setLoading(true)
     
-    // Simular salvamento
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    
-    toast.success("Banco de dados adicionado com sucesso!")
-    setOpen(false)
-    setLoading(false)
-    setFormData({
-      name: "",
-      type: "",
-      host: "",
-      port: "",
-      database: "",
-      username: "",
-      password: "",
-    })
+    try {
+      await databasesApi.create(formData)
+      toast.success("Banco de dados adicionado com sucesso!")
+      setOpen(false)
+      setFormData({
+        name: "",
+        type: "",
+        host: "",
+        port: "",
+        database: "",
+        username: "",
+        password: "",
+      })
+      onDatabaseAdded?.()
+    } catch (error) {
+      toast.error("Falha ao adicionar banco de dados")
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleTestConnection = async () => {

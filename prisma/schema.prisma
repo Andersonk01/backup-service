@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Database {
+  id            String      @id @default(uuid())
+  name          String
+  type          String
+  connectionUrl String
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  lastBackup    DateTime?
+  successRate   Float       @default(100)
+
+  jobs BackupJob[]
+  runs BackupRun[]
+}
+
+model BackupJob {
+  id            String    @id @default(uuid())
+  databaseId    String
+  frequency     String
+  time          String
+  retentionDays Int       @default(7)
+  isActive      Boolean   @default(true)
+  nextRun       DateTime?
+
+  database Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+}
+
+model BackupRun {
+  id           String    @id @default(uuid())
+  databaseId   String
+  databaseName String?
+  status       String    @default("pending")
+  filePath     String?
+  size         Int?
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  error        String?
+  duration     Int?
+
+  database Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+}

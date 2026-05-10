@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Play, Loader2, Database } from "lucide-react"
 import {
   Dialog,
@@ -22,13 +22,25 @@ import {
 } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { toast } from "sonner"
-import { mockDatabases } from "@/lib/mock-data"
+import { databasesApi, runsApi } from "@/lib/api"
+import type { Database as DatabaseType } from "@/lib/types"
 
-export function RunBackupDialog() {
+interface RunBackupDialogProps {
+  onBackupStarted?: () => void
+}
+
+export function RunBackupDialog({ onBackupStarted }: RunBackupDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [databasesList, setDatabasesList] = useState<DatabaseType[]>([])
   const [selectedDatabase, setSelectedDatabase] = useState("")
   const [skipRetention, setSkipRetention] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      databasesApi.getAll().then(setDatabasesList).catch(console.error)
+    }
+  }, [open])
 
   const handleRunBackup = async () => {
     if (!selectedDatabase) {
@@ -38,18 +50,22 @@ export function RunBackupDialog() {
 
     setLoading(true)
     
-    // Simular execução
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    
-    const db = mockDatabases.find((d) => d.id === selectedDatabase)
-    toast.success(`Backup iniciado para ${db?.name}!`)
-    setOpen(false)
-    setLoading(false)
-    setSelectedDatabase("")
-    setSkipRetention(false)
+    try {
+      await runsApi.create(selectedDatabase)
+      const db = databasesList.find((d) => d.id === selectedDatabase)
+      toast.success(`Backup iniciado para ${db?.name}!`)
+      setOpen(false)
+      setSelectedDatabase("")
+      setSkipRetention(false)
+      onBackupStarted?.()
+    } catch (error) {
+      toast.error("Falha ao iniciar backup")
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const activeDatabases = mockDatabases.filter((db) => db.isActive)
+  const activeDatabases = databasesList.filter((db) => db.isActive)
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import {
@@ -35,8 +35,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AddDatabaseDialog } from "@/components/dialogs/add-database-dialog"
-import { mockDatabases } from "@/lib/mock-data"
+import { databasesApi, runsApi } from "@/lib/api"
 import { toast } from "sonner"
+import type { Database as DatabaseType } from "@/lib/types"
 
 const typeColors = {
   postgres: "bg-info/10 text-info border-info/20",
@@ -54,8 +55,25 @@ export default function DatabasesPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [typeFilter, setTypeFilter] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [databasesList, setDatabasesList] = useState<DatabaseType[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const filteredDatabases = mockDatabases.filter((db) => {
+  useEffect(() => {
+    loadDatabases()
+  }, [])
+
+  async function loadDatabases() {
+    try {
+      const data = await databasesApi.getAll()
+      setDatabasesList(data)
+    } catch (error) {
+      console.error('Error loading databases:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const filteredDatabases = databasesList.filter((db) => {
     const matchesSearch = db.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesType = typeFilter === "all" || db.type === typeFilter
     const matchesStatus =
@@ -76,14 +94,37 @@ export default function DatabasesPage() {
     )
   }
 
-  const handleRunBackup = (dbName: string) => {
+  const handleRunBackup = async (db: DatabaseType) => {
     toast.promise(
-      new Promise((resolve) => setTimeout(resolve, 1500)),
+      runsApi.create(db.id),
       {
-        loading: `Iniciando backup de ${dbName}...`,
-        success: `Backup de ${dbName} iniciado!`,
+        loading: `Iniciando backup de ${db.name}...`,
+        success: `Backup de ${db.name} iniciado!`,
         error: "Falha ao iniciar backup",
       }
+    )
+  }
+
+  const handleDelete = async (db: DatabaseType) => {
+    try {
+      await databasesApi.delete(db.id)
+      toast.success(`${db.name} removido!`)
+      loadDatabases()
+    } catch (error) {
+      toast.error("Falha ao remover banco")
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col min-h-screen">
+        <AppHeader title="Bancos de Dados" description="Gerencie seus bancos de dados cadastrados" />
+        <div className="flex-1 p-4 sm:p-6 lg:p-8">
+          <div className="flex items-center justify-center h-64">
+            <p className="text-muted-foreground">Carregando...</p>
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -95,7 +136,6 @@ export default function DatabasesPage() {
       />
 
       <div className="flex-1 space-y-6 p-4 sm:p-6 lg:p-8">
-        {/* Header Actions */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-1 items-center gap-4">
             <div className="relative flex-1 max-w-md">
@@ -130,10 +170,9 @@ export default function DatabasesPage() {
               </SelectContent>
             </Select>
           </div>
-          <AddDatabaseDialog />
+          <AddDatabaseDialog onDatabaseAdded={loadDatabases} />
         </div>
 
-        {/* Stats Summary */}
         <div className="grid gap-4 sm:grid-cols-3">
           <Card className="bg-card border-border">
             <CardContent className="flex items-center gap-4 p-4">
@@ -141,7 +180,7 @@ export default function DatabasesPage() {
                 <Database className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{mockDatabases.length}</p>
+                <p className="text-2xl font-bold text-foreground">{databasesList.length}</p>
                 <p className="text-sm text-muted-foreground">Total de Bancos</p>
               </div>
             </CardContent>
@@ -153,7 +192,7 @@ export default function DatabasesPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-foreground">
-                  {mockDatabases.filter((db) => db.isActive).length}
+                  {databasesList.filter((db) => db.isActive).length}
                 </p>
                 <p className="text-sm text-muted-foreground">Ativos</p>
               </div>
@@ -166,7 +205,7 @@ export default function DatabasesPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-foreground">
-                  {mockDatabases.filter((db) => !db.isActive).length}
+                  {databasesList.filter((db) => !db.isActive).length}
                 </p>
                 <p className="text-sm text-muted-foreground">Inativos</p>
               </div>
@@ -174,7 +213,6 @@ export default function DatabasesPage() {
           </Card>
         </div>
 
-        {/* Database Grid */}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filteredDatabases.map((db) => (
             <Card key={db.id} className="bg-card border-border hover:border-primary/50 transition-colors">
@@ -193,8 +231,8 @@ export default function DatabasesPage() {
                           </Badge>
                         )}
                       </div>
-                      <Badge variant="outline" className={`mt-1 ${typeColors[db.type]}`}>
-                        {typeLabels[db.type]}
+                      <Badge variant="outline" className={`mt-1 ${typeColors[db.type as keyof typeof typeColors]}`}>
+                        {typeLabels[db.type as keyof typeof typeLabels]}
                       </Badge>
                     </div>
                   </div>
@@ -205,7 +243,7 @@ export default function DatabasesPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => handleRunBackup(db.name)}>
+                      <DropdownMenuItem onClick={() => handleRunBackup(db)}>
                         <Play className="mr-2 h-4 w-4" />
                         Executar backup
                       </DropdownMenuItem>
@@ -218,7 +256,7 @@ export default function DatabasesPage() {
                         Configurar
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-destructive">
+                      <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(db)}>
                         <Trash2 className="mr-2 h-4 w-4" />
                         Remover
                       </DropdownMenuItem>
@@ -249,7 +287,7 @@ export default function DatabasesPage() {
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Último Backup</span>
                       <span className="text-foreground">
-                        {formatDistanceToNow(db.lastBackup, {
+                        {formatDistanceToNow(new Date(db.lastBackup), {
                           addSuffix: true,
                           locale: ptBR,
                         })}
@@ -259,7 +297,7 @@ export default function DatabasesPage() {
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Criado em</span>
                     <span className="text-foreground">
-                      {db.createdAt.toLocaleDateString("pt-BR")}
+                      {new Date(db.createdAt).toLocaleDateString("pt-BR")}
                     </span>
                   </div>
                 </div>
@@ -277,7 +315,7 @@ export default function DatabasesPage() {
                   <Button
                     size="sm"
                     className="flex-1"
-                    onClick={() => handleRunBackup(db.name)}
+                    onClick={() => handleRunBackup(db)}
                     disabled={!db.isActive}
                   >
                     <Play className="mr-2 h-4 w-4" />
