@@ -12,6 +12,7 @@ import {
   HardDrive,
   Menu,
   X,
+  FolderTree,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -23,6 +24,7 @@ const navigation = [
   { name: "Jobs de Backup", href: "/jobs", icon: Calendar },
   { name: "Histórico", href: "/history", icon: History },
   { name: "Armazenamento", href: "/storage", icon: HardDrive },
+  { name: "Arquivos", href: "/storage/explorer", icon: FolderTree },
   { name: "Configurações", href: "/settings", icon: Settings },
 ]
 

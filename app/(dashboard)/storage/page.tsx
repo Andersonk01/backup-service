@@ -1,5 +1,7 @@
 "use client"
 
+import { useState, useEffect, useCallback } from "react"
+import { useRouter } from "next/navigation"
 import {
   HardDrive,
   Cloud,
@@ -8,6 +10,10 @@ import {
   FolderOpen,
   RefreshCw,
   AlertTriangle,
+  Plus,
+  Loader2,
+  ExternalLink,
+  FolderSearch,
 } from "lucide-react"
 import { AppHeader } from "@/components/app-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,7 +21,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { toast } from "sonner"
-import { mockStorageUsage, mockDashboardStats } from "@/lib/mock-data"
+import { storageApi } from "@/lib/api"
+import type { RemoteInfo } from "@/lib/api"
+import { AddRemoteDialog } from "@/components/dialogs/add-remote-dialog"
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B"
@@ -25,37 +33,87 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
 }
 
-const colors = [
-  { bg: "bg-primary", text: "text-primary" },
-  { bg: "bg-info", text: "text-info" },
-  { bg: "bg-warning", text: "text-warning" },
-  { bg: "bg-success", text: "text-success" },
-  { bg: "bg-destructive", text: "text-destructive" },
-]
-
 export default function StoragePage() {
-  const totalLimit = 21474836480 // 20 GB
-  const usedPercentage = (mockDashboardStats.totalStorage / totalLimit) * 100
-  const available = totalLimit - mockDashboardStats.totalStorage
+  const router = useRouter()
+  const [remotes, setRemotes] = useState<RemoteInfo[]>([])
+  const [usage, setUsage] = useState({ used: 0, total: 0, free: 0 })
+  const [loading, setLoading] = useState(true)
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [testingRemote, setTestingRemote] = useState<string | null>(null)
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [remotesData, usageData] = await Promise.all([
+        storageApi.getRemotes(),
+        storageApi.getUsage(),
+      ])
+      setRemotes(remotesData.remotes)
+      setUsage({
+        used: usageData.used || 0,
+        total: usageData.total || 0,
+        free: usageData.free || 0,
+      })
+    } catch {
+      // Silent fail - server might not be ready
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchData()
+  }, [fetchData])
+
+  const totalLimit = usage.total || 15 * 1024 * 1024 * 1024 // 15 GB default
+  const usedPercentage = totalLimit > 0 ? (usage.used / totalLimit) * 100 : 0
+  const available = totalLimit - usage.used
+
+  const handleSync = async () => {
+    toast.promise(fetchData(), {
+      loading: "Sincronizando dados de armazenamento...",
+      success: "Dados atualizados!",
+      error: "Falha ao sincronizar",
+    })
+  }
+
+  const handleDeleteRemote = async (name: string) => {
+    setDeleting(name)
+    try {
+      await storageApi.deleteRemote(name)
+      toast.success(`Remote "${name}" removido`)
+      fetchData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao remover remote")
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  const handleTestRemote = async (name: string) => {
+    setTestingRemote(name)
+    try {
+      const result = await storageApi.testRemote(name)
+      if (result.success) {
+        toast.success(`Conexão com "${name}" estabelecida`)
+      } else {
+        toast.error(`Falha na conexão: ${result.message}`)
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao testar")
+    } finally {
+      setTestingRemote(null)
+    }
+  }
 
   const handleCleanup = () => {
     toast.promise(
       new Promise((resolve) => setTimeout(resolve, 3000)),
       {
         loading: "Executando limpeza de arquivos antigos...",
-        success: "Limpeza concluída! 2.5 GB liberados.",
+        success: "Limpeza concluída!",
         error: "Falha na limpeza",
-      }
-    )
-  }
-
-  const handleSync = () => {
-    toast.promise(
-      new Promise((resolve) => setTimeout(resolve, 2000)),
-      {
-        loading: "Sincronizando com Google Drive...",
-        success: "Sincronização concluída!",
-        error: "Falha na sincronização",
       }
     )
   }
@@ -64,254 +122,271 @@ export default function StoragePage() {
     <div className="flex flex-col min-h-screen">
       <AppHeader
         title="Armazenamento"
-        description="Gerencie o espaço de backup no Google Drive"
+        description="Gerencie os remotes de armazenamento na nuvem"
       />
 
       <div className="flex-1 space-y-6 p-4 sm:p-6 lg:p-8">
-        {/* Header Actions */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-2xl font-bold tracking-tight text-foreground">
-              Google Drive Storage
+              Rclone Storage
             </h2>
             <p className="text-muted-foreground">
-              Gerenciamento de espaço e arquivos de backup
+              Gerencie remotes e arquivos de backup
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleSync}>
-              <RefreshCw className="mr-2 h-4 w-4" />
+            <Button variant="outline" onClick={handleSync} disabled={loading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               Sincronizar
             </Button>
-            <Button variant="destructive" onClick={handleCleanup}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              Limpar Antigos
+            <Button onClick={() => setAddDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Adicionar Remote
             </Button>
           </div>
         </div>
 
-        {/* Usage Overview */}
-        <div className="grid gap-6 lg:grid-cols-3">
-          {/* Main Usage Card */}
-          <Card className="lg:col-span-2 bg-card border-border">
-            <CardHeader>
-              <CardTitle className="text-foreground flex items-center gap-2">
-                <Cloud className="h-5 w-5 text-primary" />
-                Visão Geral
-              </CardTitle>
-              <CardDescription>
-                Uso atual do armazenamento no Google Drive
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Progress */}
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-foreground font-medium">
-                    {formatBytes(mockDashboardStats.totalStorage)} usado
-                  </span>
-                  <span className="text-muted-foreground">
-                    {formatBytes(totalLimit)} total
-                  </span>
-                </div>
-                <Progress value={usedPercentage} className="h-3" />
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>{usedPercentage.toFixed(1)}% utilizado</span>
-                  <span>{formatBytes(available)} disponível</span>
-                </div>
-              </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            {/* Usage Overview */}
+            {remotes.length > 0 && (
+              <div className="grid gap-6 lg:grid-cols-3">
+                <Card className="lg:col-span-2 bg-card border-border">
+                  <CardHeader>
+                    <CardTitle className="text-foreground flex items-center gap-2">
+                      <Cloud className="h-5 w-5 text-primary" />
+                      Visão Geral
+                    </CardTitle>
+                    <CardDescription>
+                      Uso atual do armazenamento nos remotes configurados
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-foreground font-medium">
+                          {formatBytes(usage.used)} usado
+                        </span>
+                        <span className="text-muted-foreground">
+                          {formatBytes(totalLimit)} total
+                        </span>
+                      </div>
+                      <Progress value={usedPercentage} className="h-3" />
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>{usedPercentage.toFixed(1)}% utilizado</span>
+                        <span>{formatBytes(available)} disponível</span>
+                      </div>
+                    </div>
 
-              {/* Warning if above 80% */}
-              {usedPercentage > 80 && (
-                <div className="flex items-center gap-3 rounded-lg bg-warning/10 border border-warning/20 p-4">
-                  <AlertTriangle className="h-5 w-5 text-warning" />
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      Espaço quase esgotado
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Considere aumentar a quota ou limpar backups antigos.
-                    </p>
-                  </div>
-                </div>
-              )}
+                    {usedPercentage > 80 && (
+                      <div className="flex items-center gap-3 rounded-lg bg-warning/10 border border-warning/20 p-4">
+                        <AlertTriangle className="h-5 w-5 text-warning" />
+                        <div>
+                          <p className="text-sm font-medium text-foreground">
+                            Espaço quase esgotado
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Considere aumentar a quota ou limpar backups antigos.
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
-              {/* Stats Grid */}
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="rounded-lg bg-secondary/50 p-4">
-                  <div className="flex items-center gap-2">
-                    <HardDrive className="h-4 w-4 text-primary" />
-                    <span className="text-xs text-muted-foreground">Total de Arquivos</span>
-                  </div>
-                  <p className="mt-2 text-2xl font-bold text-foreground">156</p>
-                </div>
-                <div className="rounded-lg bg-secondary/50 p-4">
-                  <div className="flex items-center gap-2">
-                    <FolderOpen className="h-4 w-4 text-info" />
-                    <span className="text-xs text-muted-foreground">Pastas</span>
-                  </div>
-                  <p className="mt-2 text-2xl font-bold text-foreground">5</p>
-                </div>
-                <div className="rounded-lg bg-secondary/50 p-4">
-                  <div className="flex items-center gap-2">
-                    <Download className="h-4 w-4 text-success" />
-                    <span className="text-xs text-muted-foreground">Último Upload</span>
-                  </div>
-                  <p className="mt-2 text-lg font-bold text-foreground">há 2h</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      <div className="rounded-lg bg-secondary/50 p-4">
+                        <div className="flex items-center gap-2">
+                          <HardDrive className="h-4 w-4 text-primary" />
+                          <span className="text-xs text-muted-foreground">Remotes</span>
+                        </div>
+                        <p className="mt-2 text-2xl font-bold text-foreground">{remotes.length}</p>
+                      </div>
+                      <div className="rounded-lg bg-secondary/50 p-4">
+                        <div className="flex items-center gap-2">
+                          <FolderOpen className="h-4 w-4 text-info" />
+                          <span className="text-xs text-muted-foreground">Tipos</span>
+                        </div>
+                        <p className="mt-2 text-2xl font-bold text-foreground">
+                          {new Set(remotes.map((r) => r.type)).size}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-secondary/50 p-4">
+                        <div className="flex items-center gap-2">
+                          <Download className="h-4 w-4 text-success" />
+                          <span className="text-xs text-muted-foreground">Drive ativos</span>
+                        </div>
+                        <p className="mt-2 text-2xl font-bold text-foreground">
+                          {remotes.filter((r) => r.type === "drive").length}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
 
-          {/* Quick Stats */}
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="text-foreground">Estatísticas</CardTitle>
-              <CardDescription>Métricas de armazenamento</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex justify-between items-center py-2 border-b border-border">
-                <span className="text-sm text-muted-foreground">Maior arquivo</span>
-                <span className="text-sm font-medium text-foreground">2.1 GB</span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-border">
-                <span className="text-sm text-muted-foreground">Tamanho médio</span>
-                <span className="text-sm font-medium text-foreground">82.5 MB</span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-border">
-                <span className="text-sm text-muted-foreground">Backups/dia</span>
-                <span className="text-sm font-medium text-foreground">~14</span>
-              </div>
-              <div className="flex justify-between items-center py-2 border-b border-border">
-                <span className="text-sm text-muted-foreground">Crescimento/mês</span>
-                <span className="text-sm font-medium text-foreground">+3.2 GB</span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-sm text-muted-foreground">Dias restantes</span>
-                <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20">
-                  ~45 dias
-                </Badge>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Per-Database Usage */}
-        <Card className="bg-card border-border">
-          <CardHeader>
-            <CardTitle className="text-foreground">Uso por Banco de Dados</CardTitle>
-            <CardDescription>
-              Distribuição do armazenamento entre os bancos cadastrados
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-6">
-              {mockStorageUsage.map((item, index) => (
-                <div key={item.name} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                <Card className="bg-card border-border">
+                  <CardHeader>
+                    <CardTitle className="text-foreground">Remotes</CardTitle>
+                    <CardDescription>Remotes configurados</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {remotes.map((remote) => (
                       <div
-                        className={`h-3 w-3 rounded-full ${colors[index % colors.length].bg}`}
-                      />
-                      <span className="font-medium text-foreground">{item.name}</span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-sm text-muted-foreground">
-                        {item.percentage}%
-                      </span>
-                      <span className="text-sm font-medium text-foreground w-24 text-right">
-                        {formatBytes(item.size)}
-                      </span>
-                    </div>
-                  </div>
-                  <Progress value={item.percentage} className="h-2" />
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                        key={remote.name}
+                        className="flex items-center justify-between rounded-lg border border-border p-3"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                            <Cloud className="h-4 w-4 text-primary" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{remote.name}</p>
+                            <p className="text-xs text-muted-foreground">{remote.type}</p>
+                          </div>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className="bg-success/10 text-success border-success/20"
+                        >
+                          Configurado
+                        </Badge>
+                      </div>
+                    ))}
+                    {remotes.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        Nenhum remote configurado
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
 
-        {/* Retention Policies */}
-        <Card className="bg-card border-border">
-          <CardHeader>
-            <CardTitle className="text-foreground">Políticas de Retenção</CardTitle>
-            <CardDescription>
-              Configurações de retenção automática por banco
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Banco de Dados
-                    </th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Retenção
-                    </th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Arquivos Atuais
-                    </th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Próxima Limpeza
-                    </th>
-                    <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Ações
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-border">
-                    <td className="py-3 px-4 text-foreground font-medium">Produção Principal</td>
-                    <td className="py-3 px-4 text-foreground">7 dias</td>
-                    <td className="py-3 px-4 text-foreground">7 arquivos</td>
-                    <td className="py-3 px-4 text-muted-foreground">em 2 dias</td>
-                    <td className="py-3 px-4 text-right">
-                      <Button variant="ghost" size="sm">
-                        Configurar
-                      </Button>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="py-3 px-4 text-foreground font-medium">API Gateway</td>
-                    <td className="py-3 px-4 text-foreground">3 dias</td>
-                    <td className="py-3 px-4 text-foreground">72 arquivos</td>
-                    <td className="py-3 px-4 text-muted-foreground">em 1 hora</td>
-                    <td className="py-3 px-4 text-right">
-                      <Button variant="ghost" size="sm">
-                        Configurar
-                      </Button>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="py-3 px-4 text-foreground font-medium">Analytics</td>
-                    <td className="py-3 px-4 text-foreground">14 dias</td>
-                    <td className="py-3 px-4 text-foreground">14 arquivos</td>
-                    <td className="py-3 px-4 text-muted-foreground">em 5 dias</td>
-                    <td className="py-3 px-4 text-right">
-                      <Button variant="ghost" size="sm">
-                        Configurar
-                      </Button>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-border">
-                    <td className="py-3 px-4 text-foreground font-medium">Staging</td>
-                    <td className="py-3 px-4 text-foreground">5 dias</td>
-                    <td className="py-3 px-4 text-foreground">5 arquivos</td>
-                    <td className="py-3 px-4 text-muted-foreground">em 3 dias</td>
-                    <td className="py-3 px-4 text-right">
-                      <Button variant="ghost" size="sm">
-                        Configurar
-                      </Button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+            {/* Remotes List */}
+            <Card className="bg-card border-border">
+              <CardHeader>
+                <CardTitle className="text-foreground">Remotes Configurados</CardTitle>
+                <CardDescription>
+                  Gerencie seus remotes do rclone
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {remotes.length === 0 ? (
+                  <div className="flex flex-col items-center gap-4 py-12">
+                    <Cloud className="h-16 w-16 text-muted-foreground/30" />
+                    <div className="text-center">
+                      <p className="text-lg font-medium text-foreground">Nenhum remote configurado</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Adicione um remote do Google Drive para começar a armazenar backups na nuvem
+                      </p>
+                    </div>
+                    <Button onClick={() => setAddDialogOpen(true)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Adicionar Remote
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {remotes.map((remote) => (
+                      <div
+                        key={remote.name}
+                        className="flex items-center justify-between rounded-lg border border-border p-4 transition-colors hover:bg-muted/30"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                            {remote.type === "drive" ? (
+                              <Cloud className="h-5 w-5 text-primary" />
+                            ) : (
+                              <HardDrive className="h-5 w-5 text-primary" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-foreground">{remote.name}</p>
+                              <Badge variant="secondary" className="text-xs">
+                                {remote.type}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {Object.keys(remote.config).length} configurações
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => router.push(`/storage/explorer?remote=${encodeURIComponent(remote.name)}`)}
+                          >
+                            <FolderSearch className="h-4 w-4 mr-1.5" />
+                            Explorar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleTestRemote(remote.name)}
+                            disabled={testingRemote === remote.name}
+                          >
+                            {testingRemote === remote.name ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <ExternalLink className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => handleDeleteRemote(remote.name)}
+                            disabled={deleting === remote.name}
+                          >
+                            {deleting === remote.name ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Recent Uploads / Retention placeholder */}
+            <Card className="bg-card border-border">
+              <CardHeader>
+                <CardTitle className="text-foreground">Ações</CardTitle>
+                <CardDescription>
+                  Gerenciamento de armazenamento e uploads
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="outline" onClick={handleCleanup}>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Limpar Arquivos Antigos
+                  </Button>
+                  <Button variant="outline" onClick={() => setAddDialogOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Novo Remote
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </>
+        )}
       </div>
+
+      <AddRemoteDialog
+        open={addDialogOpen}
+        onOpenChange={setAddDialogOpen}
+        onSuccess={fetchData}
+      />
     </div>
   )
 }

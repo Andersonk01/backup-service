@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { format, formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import {
@@ -13,6 +13,7 @@ import {
   Trash2,
   Plus,
   RefreshCw,
+  Loader2,
 } from "lucide-react"
 import { AppHeader } from "@/components/app-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -34,56 +35,145 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { toast } from "sonner"
-import { mockBackupJobs, mockDatabases } from "@/lib/mock-data"
+import { jobsApi, runsApi, databasesApi } from "@/lib/api"
+import type { BackupJob, Database } from "@/lib/types"
 
-const frequencyLabels = {
+const frequencyLabels: Record<string, string> = {
   hourly: "A cada hora",
   daily: "Diário",
   weekly: "Semanal",
 }
 
-const frequencyColors = {
+const frequencyColors: Record<string, string> = {
   hourly: "bg-info/10 text-info border-info/20",
   daily: "bg-primary/10 text-primary border-primary/20",
   weekly: "bg-warning/10 text-warning border-warning/20",
 }
 
 export default function JobsPage() {
-  const [jobs, setJobs] = useState(mockBackupJobs)
+  const [jobs, setJobs] = useState<BackupJob[]>([])
+  const [databases, setDatabases] = useState<Database[]>([])
+  const [loading, setLoading] = useState(true)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createData, setCreateData] = useState({
+    databaseId: "",
+    frequency: "daily",
+    time: "02:00",
+    retentionDays: 7,
+  })
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [jobsData, dbsData] = await Promise.all([
+        jobsApi.getAll(),
+        databasesApi.getAll(),
+      ])
+      setJobs(jobsData)
+      setDatabases(dbsData)
+    } catch {
+      toast.error("Erro ao carregar dados")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   const getDatabaseName = (databaseId: string) => {
-    return mockDatabases.find((db) => db.id === databaseId)?.name || "Desconhecido"
+    return databases.find((db) => db.id === databaseId)?.name || "Desconhecido"
   }
 
-  const handleToggleJob = (jobId: string) => {
-    setJobs((prev) =>
-      prev.map((job) =>
-        job.id === jobId ? { ...job, isActive: !job.isActive } : job
-      )
-    )
+  const handleToggleJob = async (jobId: string) => {
     const job = jobs.find((j) => j.id === jobId)
-    toast.success(
-      job?.isActive
-        ? `Job de ${getDatabaseName(job.databaseId)} desativado`
-        : `Job de ${getDatabaseName(job?.databaseId || "")} ativado`
-    )
+    if (!job) return
+
+    try {
+      const updated = await jobsApi.toggle(jobId, !job.isActive)
+      setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, isActive: updated.isActive } : j)))
+      toast.success(updated.isActive ? "Job ativado" : "Job desativado")
+    } catch {
+      toast.error("Erro ao alterar job")
+    }
   }
 
-  const handleRunNow = (jobId: string) => {
+  const handleRunNow = async (jobId: string) => {
     const job = jobs.find((j) => j.id === jobId)
-    toast.promise(
-      new Promise((resolve) => setTimeout(resolve, 1500)),
-      {
-        loading: `Executando backup de ${getDatabaseName(job?.databaseId || "")}...`,
-        success: "Backup iniciado com sucesso!",
-        error: "Falha ao iniciar backup",
-      }
-    )
+    if (!job) return
+
+    try {
+      await runsApi.create(job.databaseId)
+      toast.success("Backup iniciado com sucesso!")
+    } catch {
+      toast.error("Erro ao iniciar backup")
+    }
+  }
+
+  const handleDeleteJob = async (jobId: string) => {
+    try {
+      await jobsApi.delete(jobId)
+      setJobs((prev) => prev.filter((j) => j.id !== jobId))
+      toast.success("Job excluído")
+    } catch {
+      toast.error("Erro ao excluir job")
+    }
+  }
+
+  const handleCreateJob = async () => {
+    if (!createData.databaseId) {
+      toast.error("Selecione um banco de dados")
+      return
+    }
+
+    try {
+      await jobsApi.create({
+        databaseId: createData.databaseId,
+        frequency: createData.frequency,
+        time: createData.time,
+        retentionDays: createData.retentionDays,
+      })
+      toast.success("Job criado com sucesso!")
+      setCreateOpen(false)
+      setCreateData({ databaseId: "", frequency: "daily", time: "02:00", retentionDays: 7 })
+      fetchData()
+    } catch {
+      toast.error("Erro ao criar job")
+    }
   }
 
   const activeJobs = jobs.filter((j) => j.isActive).length
   const totalJobs = jobs.length
+
+  if (loading) {
+    return (
+      <div className="flex flex-col min-h-screen">
+        <AppHeader title="Jobs de Backup" description="Configure agendamentos automáticos" />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -103,10 +193,81 @@ export default function JobsPage() {
               {activeJobs} de {totalJobs} jobs ativos
             </p>
           </div>
-          <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
-            <Plus className="mr-2 h-4 w-4" />
-            Novo Job
-          </Button>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+                <Plus className="mr-2 h-4 w-4" />
+                Novo Job
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Novo Job de Backup</DialogTitle>
+                <DialogDescription>
+                  Configure um novo backup agendado
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div className="space-y-2">
+                  <Label>Banco de Dados</Label>
+                  <Select
+                    value={createData.databaseId}
+                    onValueChange={(v) => setCreateData({ ...createData, databaseId: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {databases.map((db) => (
+                        <SelectItem key={db.id} value={db.id}>
+                          {db.name} ({db.type})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Frequência</Label>
+                  <Select
+                    value={createData.frequency}
+                    onValueChange={(v) => setCreateData({ ...createData, frequency: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="hourly">A cada hora</SelectItem>
+                      <SelectItem value="daily">Diário</SelectItem>
+                      <SelectItem value="weekly">Semanal</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Horário</Label>
+                  <Input
+                    type="time"
+                    value={createData.time}
+                    onChange={(e) => setCreateData({ ...createData, time: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Dias de Retenção</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={createData.retentionDays}
+                    onChange={(e) => setCreateData({ ...createData, retentionDays: parseInt(e.target.value) || 7 })}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCreateOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleCreateJob}>Criar Job</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Stats */}
@@ -170,88 +331,86 @@ export default function JobsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-transparent">
-                    <TableHead className="text-muted-foreground">Banco de Dados</TableHead>
-                    <TableHead className="text-muted-foreground">Frequência</TableHead>
-                    <TableHead className="text-muted-foreground">Horário</TableHead>
-                    <TableHead className="text-muted-foreground">Retenção</TableHead>
-                    <TableHead className="text-muted-foreground">Próxima Execução</TableHead>
-                    <TableHead className="text-muted-foreground">Status</TableHead>
-                    <TableHead className="text-muted-foreground text-right">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {jobs.map((job) => (
-                    <TableRow key={job.id} className="border-border">
-                      <TableCell className="font-medium text-foreground">
-                        {getDatabaseName(job.databaseId)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={frequencyColors[job.frequency]}>
-                          {frequencyLabels[job.frequency]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-foreground">{job.time}</TableCell>
-                      <TableCell className="text-foreground">{job.retentionDays} dias</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {job.nextRun && job.isActive
-                          ? formatDistanceToNow(job.nextRun, {
-                              addSuffix: true,
-                              locale: ptBR,
-                            })
-                          : "-"}
-                      </TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={job.isActive}
-                          onCheckedChange={() => handleToggleJob(job.id)}
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => handleRunNow(job.id)}>
-                              <Play className="mr-2 h-4 w-4" />
-                              Executar agora
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              {job.isActive ? (
-                                <>
-                                  <Pause className="mr-2 h-4 w-4" />
-                                  Pausar
-                                </>
-                              ) : (
-                                <>
-                                  <Play className="mr-2 h-4 w-4" />
-                                  Ativar
-                                </>
-                              )}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <Settings className="mr-2 h-4 w-4" />
-                              Configurar
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-destructive">
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Excluir
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+            {jobs.length === 0 ? (
+              <div className="flex flex-col items-center gap-4 py-8">
+                <Calendar className="h-12 w-12 text-muted-foreground/30" />
+                <div className="text-center">
+                  <p className="text-sm font-medium text-foreground">Nenhum job configurado</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Crie um job para agendar backups automáticos
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border hover:bg-transparent">
+                      <TableHead className="text-muted-foreground">Banco de Dados</TableHead>
+                      <TableHead className="text-muted-foreground">Frequência</TableHead>
+                      <TableHead className="text-muted-foreground">Horário</TableHead>
+                      <TableHead className="text-muted-foreground">Retenção</TableHead>
+                      <TableHead className="text-muted-foreground">Próxima Execução</TableHead>
+                      <TableHead className="text-muted-foreground">Status</TableHead>
+                      <TableHead className="text-muted-foreground text-right">Ações</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {jobs.map((job) => (
+                      <TableRow key={job.id} className="border-border">
+                        <TableCell className="font-medium text-foreground">
+                          {getDatabaseName(job.databaseId)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={frequencyColors[job.frequency]}>
+                            {frequencyLabels[job.frequency] || job.frequency}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-foreground">{job.time}</TableCell>
+                        <TableCell className="text-foreground">{job.retentionDays} dias</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {job.nextRun && job.isActive
+                            ? formatDistanceToNow(new Date(job.nextRun), {
+                                addSuffix: true,
+                                locale: ptBR,
+                              })
+                            : "-"}
+                        </TableCell>
+                        <TableCell>
+                          <Switch
+                            checked={job.isActive}
+                            onCheckedChange={() => handleToggleJob(job.id)}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleRunNow(job.id)}>
+                                <Play className="mr-2 h-4 w-4" />
+                                Executar agora
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => handleDeleteJob(job.id)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Excluir
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -264,45 +423,51 @@ export default function JobsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {jobs
-                .filter((j) => j.isActive && j.nextRun)
-                .sort((a, b) => (a.nextRun?.getTime() || 0) - (b.nextRun?.getTime() || 0))
-                .slice(0, 5)
-                .map((job) => (
-                  <div
-                    key={job.id}
-                    className="flex items-center justify-between rounded-lg border border-border bg-secondary/30 p-4"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                        <Clock className="h-5 w-5 text-primary" />
+            {jobs.filter((j) => j.isActive && j.nextRun).length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                Nenhum backup agendado
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {jobs
+                  .filter((j) => j.isActive && j.nextRun)
+                  .sort((a, b) => (new Date(a.nextRun!).getTime()) - (new Date(b.nextRun!).getTime()))
+                  .slice(0, 5)
+                  .map((job) => (
+                    <div
+                      key={job.id}
+                      className="flex items-center justify-between rounded-lg border border-border bg-secondary/30 p-4"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                          <Clock className="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-foreground">
+                            {getDatabaseName(job.databaseId)}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {job.nextRun && format(new Date(job.nextRun), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium text-foreground">
-                          {getDatabaseName(job.databaseId)}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {job.nextRun && format(job.nextRun, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        <Badge variant="outline" className={frequencyColors[job.frequency]}>
+                          {frequencyLabels[job.frequency] || job.frequency}
+                        </Badge>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRunNow(job.id)}
+                        >
+                          <Play className="mr-1 h-3 w-3" />
+                          Executar
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <Badge variant="outline" className={frequencyColors[job.frequency]}>
-                        {frequencyLabels[job.frequency]}
-                      </Badge>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleRunNow(job.id)}
-                      >
-                        <Play className="mr-1 h-3 w-3" />
-                        Executar
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-            </div>
+                  ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

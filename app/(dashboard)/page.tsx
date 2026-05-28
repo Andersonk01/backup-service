@@ -1,6 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
+import { format } from "date-fns"
+import { ptBR } from "date-fns/locale"
 import { AppHeader } from "@/components/app-header"
 import { StatsCards } from "@/components/dashboard/stats-cards"
 import { BackupChart } from "@/components/dashboard/backup-chart"
@@ -10,16 +12,6 @@ import { DatabaseList } from "@/components/dashboard/database-list"
 import { RunBackupDialog } from "@/components/dialogs/run-backup-dialog"
 import { statsApi, runsApi, databasesApi } from "@/lib/api"
 import type { DashboardStats, BackupRun, Database } from "@/lib/types"
-
-const mockBackupHistory = [
-  { date: '28/04', success: 12, failed: 1 },
-  { date: '29/04', success: 14, failed: 0 },
-  { date: '30/04', success: 13, failed: 2 },
-  { date: '01/05', success: 15, failed: 0 },
-  { date: '02/05', success: 14, failed: 1 },
-  { date: '03/05', success: 13, failed: 1 },
-  { date: '04/05', success: 8, failed: 0 },
-]
 
 export default function DashboardPage() {
   const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null)
@@ -62,6 +54,38 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [])
 
+  const backupHistory = useMemo(() => {
+    const last7Days = new Date()
+    last7Days.setDate(last7Days.getDate() - 7)
+
+    const recent = backupRuns.filter(
+      (r) => new Date(r.startedAt) > last7Days
+    )
+
+    const dayMap = new Map<string, { success: number; failed: number }>()
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      const key = format(d, "dd/MM", { locale: ptBR })
+      dayMap.set(key, { success: 0, failed: 0 })
+    }
+
+    for (const run of recent) {
+      const key = format(new Date(run.startedAt), "dd/MM", { locale: ptBR })
+      const entry = dayMap.get(key)
+      if (entry) {
+        if (run.status === "success") entry.success++
+        else if (run.status === "failed") entry.failed++
+      }
+    }
+
+    return Array.from(dayMap.entries()).map(([date, counts]) => ({
+      date,
+      ...counts,
+    }))
+  }, [backupRuns])
+
   if (loading) {
     return (
       <div className="flex flex-col min-h-screen">
@@ -84,12 +108,6 @@ export default function DashboardPage() {
     totalStorage: 0,
     averageBackupTime: 0,
   }
-
-  const storageUsage = databasesList.map(db => ({
-    name: db.name,
-    size: db.lastBackup ? 5368709120 : 0,
-    percentage: 33,
-  }))
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -117,7 +135,7 @@ export default function DashboardPage() {
         <StatsCards stats={statsWithDefaults} />
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <BackupChart data={mockBackupHistory} />
+          <BackupChart data={backupHistory} />
           <RecentRuns runs={backupRuns} />
         </div>
 
@@ -126,7 +144,11 @@ export default function DashboardPage() {
             <DatabaseList databases={databasesList} />
           </div>
           <StorageCard
-            data={storageUsage}
+            data={databasesList.map(db => ({
+              name: db.name,
+              size: 0,
+              percentage: 0,
+            }))}
             totalUsed={statsWithDefaults.totalStorage}
           />
         </div>

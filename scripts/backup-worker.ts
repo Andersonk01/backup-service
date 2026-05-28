@@ -3,6 +3,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { prisma } from '../lib/prisma'
 import { promisify } from 'util'
+import { uploadFile, listRemotes } from '../lib/rclone'
 
 const execAsync = promisify(exec)
 
@@ -50,11 +51,42 @@ async function runBackup({ runId, databaseId }: BackupOptions) {
 
     console.log(`[${new Date().toISOString()}] Backup completed: ${backupFile} (${formatBytes(fileSize)})`)
 
+    // Upload to cloud storage if enabled
+    const uploadEnabled = process.env.STORAGE_UPLOAD_ENABLED === 'true'
+    let remotePath: string | undefined
+
+    if (uploadEnabled) {
+      try {
+        const remotes = await listRemotes()
+        const defaultRemote = process.env.DEFAULT_RCLONE_REMOTE || remotes.find(r => r.type === 'drive')?.name
+
+        if (defaultRemote) {
+          const storagePath = process.env.STORAGE_BACKUP_PATH || '/backups'
+          const destPath = `${storagePath}/${database.name.replace(/[^a-zA-Z0-9]/g, '_')}/${path.basename(backupFile)}`
+
+          console.log(`[${new Date().toISOString()}] Uploading to ${defaultRemote}:${destPath}...`)
+
+          const uploadResult = await uploadFile(backupFile, defaultRemote, destPath)
+
+          if (uploadResult.success) {
+            remotePath = `${defaultRemote}:${destPath}`
+            console.log(`[${new Date().toISOString()}] Upload completed: ${remotePath}`)
+          } else {
+            console.error(`[${new Date().toISOString()}] Upload failed: ${uploadResult.error}`)
+          }
+        } else {
+          console.log(`[${new Date().toISOString()}] No remote configured for upload, skipping`)
+        }
+      } catch (uploadError) {
+        console.error(`[${new Date().toISOString()}] Upload error:`, uploadError)
+      }
+    }
+
     await prisma.backupRun.update({
       where: { id: runId },
       data: {
         status: 'success',
-        filePath: backupFile,
+        filePath: remotePath || backupFile,
         size: fileSize,
         finishedAt: new Date(),
         duration: Math.round((Date.now() - new Date(run.startedAt).getTime()) / 1000),
