@@ -15,6 +15,7 @@ export async function GET() {
       retentionDays: job.retentionDays,
       isActive: job.isActive,
       nextRun: job.nextRun,
+      destination: job.destination,
     }))
     
     return NextResponse.json(formattedJobs)
@@ -27,7 +28,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { databaseId, frequency, time, retentionDays, isActive } = body
+    const { databaseId, frequency, time, retentionDays, isActive, destination } = body
 
     const job = await prisma.backupJob.create({
       data: {
@@ -36,6 +37,7 @@ export async function POST(request: Request) {
         time,
         retentionDays: retentionDays || 7,
         isActive: isActive ?? true,
+        destination: destination || 'remote',
       },
     })
 

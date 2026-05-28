@@ -1,6 +1,8 @@
 import path from "path"
 import fs from "fs"
+import os from "os"
 import { spawn } from "child_process"
+import { prisma } from "@/lib/prisma"
 import type {
   RemoteInfo,
   ProviderInfo,
@@ -8,7 +10,6 @@ import type {
   StorageUsage,
   TestResult,
   UploadResult,
-  RcloneConfig,
 } from "./rclone-types"
 
 function getRcloneBinary(): string {
@@ -25,7 +26,7 @@ function getRcloneBinary(): string {
 function getConfigPath(): string {
   return (
     process.env.RCLONE_CONFIG_PATH ||
-    path.join(process.cwd(), "data", "rclone.conf")
+    path.join(os.tmpdir(), "backup-service-rclone.conf")
   )
 }
 
@@ -44,9 +45,70 @@ function ensureConfigDir(): void {
   }
 }
 
-function runRcloneCommand(
+async function syncDbToConfigFile(): Promise<void> {
+  const remotes = await prisma.remote.findMany()
+  const configPath = getConfigPath()
+  ensureConfigDir()
+
+  const lines: string[] = []
+  for (const remote of remotes) {
+    lines.push(`[${remote.name}]`)
+    lines.push(`type = ${remote.type}`)
+    const config = remote.config as Record<string, string>
+    for (const [key, value] of Object.entries(config)) {
+      lines.push(`${key} = ${value}`)
+    }
+    lines.push("")
+  }
+
+  fs.writeFileSync(configPath, lines.join("\n"), "utf-8")
+}
+
+async function syncConfigFileToDb(): Promise<void> {
+  const configPath = getConfigPath()
+  if (!fs.existsSync(configPath)) return
+
+  const content = fs.readFileSync(configPath, "utf-8")
+  const parsed: Record<string, Record<string, string>> = {}
+  let currentSection: string | null = null
+
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue
+
+    const sectionMatch = trimmed.match(/^\[(.+)\]$/)
+    if (sectionMatch) {
+      currentSection = sectionMatch[1]
+      parsed[currentSection] = {}
+      continue
+    }
+
+    if (currentSection) {
+      const eqIdx = trimmed.indexOf("=")
+      if (eqIdx > 0) {
+        const key = trimmed.substring(0, eqIdx).trim()
+        const value = trimmed.substring(eqIdx + 1).trim()
+        parsed[currentSection][key] = value
+      }
+    }
+  }
+
+  for (const [name, config] of Object.entries(parsed)) {
+    const type = config.type || "drive"
+    const { type: _, ...rest } = config
+    await prisma.remote.upsert({
+      where: { name },
+      update: { type, config: rest as any },
+      create: { name, type, config: rest as any },
+    })
+  }
+}
+
+async function runRcloneCommand(
   ...args: (string | number | boolean | Record<string, unknown>)[]
 ): Promise<string> {
+  await syncDbToConfigFile()
+
   return new Promise((resolve, reject) => {
     const env = getRcloneEnv()
 
@@ -72,7 +134,13 @@ function runRcloneCommand(
 
     child.on("error", reject)
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
+      try {
+        await syncConfigFileToDb()
+      } catch {
+        // silent — best effort sync back after rclone modifies config
+      }
+
       const stderrStr = Buffer.concat(stderr).toString("utf-8").trim()
       if (code === 0) {
         resolve(Buffer.concat(stdout).toString("utf-8").trim())
@@ -84,19 +152,12 @@ function runRcloneCommand(
 }
 
 export async function listRemotes(): Promise<RemoteInfo[]> {
-  ensureConfigDir()
-
   try {
-    const output = await runRcloneCommand("config", "dump")
-    if (!output || output === "{}") return []
-
-    const config: RcloneConfig = JSON.parse(output)
-    return Object.entries(config).map(([name, opts]) => ({
-      name,
-      type: opts.type || "unknown",
-      config: Object.fromEntries(
-        Object.entries(opts).filter(([k]) => k !== "type")
-      ),
+    const db = await prisma.remote.findMany()
+    return db.map((r) => ({
+      name: r.name,
+      type: r.type,
+      config: r.config as unknown as Record<string, string>,
     }))
   } catch {
     return []
@@ -104,76 +165,17 @@ export async function listRemotes(): Promise<RemoteInfo[]> {
 }
 
 export async function getRemote(name: string): Promise<RemoteInfo | null> {
-  ensureConfigDir()
-
   try {
-    const output = await runRcloneCommand("config", "show", name)
-    if (!output) return null
-
-    const config: RcloneConfig = JSON.parse(output)
-    const remote = config[name]
-    if (!remote) return null
-
+    const db = await prisma.remote.findUnique({ where: { name } })
+    if (!db) return null
     return {
-      name,
-      type: remote.type || "unknown",
-      config: Object.fromEntries(
-        Object.entries(remote).filter(([k]) => k !== "type")
-      ),
+      name: db.name,
+      type: db.type,
+      config: db.config as Record<string, string>,
     }
   } catch {
     return null
   }
-}
-
-function readConfigFile(): Record<string, Record<string, string>> {
-  const configPath = getConfigPath()
-  ensureConfigDir()
-
-  if (!fs.existsSync(configPath)) return {}
-
-  const content = fs.readFileSync(configPath, "utf-8")
-  const result: Record<string, Record<string, string>> = {}
-  let currentSection: string | null = null
-
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue
-
-    const sectionMatch = trimmed.match(/^\[(.+)\]$/)
-    if (sectionMatch) {
-      currentSection = sectionMatch[1]
-      result[currentSection] = {}
-      continue
-    }
-
-    if (currentSection) {
-      const eqIdx = trimmed.indexOf("=")
-      if (eqIdx > 0) {
-        const key = trimmed.substring(0, eqIdx).trim()
-        const value = trimmed.substring(eqIdx + 1).trim()
-        result[currentSection][key] = value
-      }
-    }
-  }
-
-  return result
-}
-
-function writeConfigFile(config: Record<string, Record<string, string>>): void {
-  const configPath = getConfigPath()
-  ensureConfigDir()
-
-  const lines: string[] = []
-  for (const [section, values] of Object.entries(config)) {
-    lines.push(`[${section}]`)
-    for (const [key, value] of Object.entries(values)) {
-      lines.push(`${key} = ${value}`)
-    }
-    lines.push("")
-  }
-
-  fs.writeFileSync(configPath, lines.join("\n"), "utf-8")
 }
 
 export async function createRemote(
@@ -181,25 +183,35 @@ export async function createRemote(
   type: string,
   config: Record<string, string>
 ): Promise<void> {
-  const current = readConfigFile()
-  current[name] = { type, ...config }
-  writeConfigFile(current)
+  await syncDbToConfigFile()
+
+  await prisma.remote.upsert({
+    where: { name },
+    update: { type, config: config as any },
+    create: { name, type, config: config as any },
+  })
+
+  await syncDbToConfigFile()
 }
 
 export async function updateRemote(
   name: string,
   config: Record<string, string>
 ): Promise<void> {
-  const current = readConfigFile()
-  if (!current[name]) throw new Error(`Remote "${name}" not found`)
-  current[name] = { ...current[name], ...config }
-  writeConfigFile(current)
+  const existing = await prisma.remote.findUnique({ where: { name } })
+  if (!existing) throw new Error(`Remote "${name}" not found`)
+
+  await prisma.remote.update({
+    where: { name },
+    data: { config: config as any },
+  })
+
+  await syncDbToConfigFile()
 }
 
 export async function deleteRemote(name: string): Promise<void> {
-  const current = readConfigFile()
-  delete current[name]
-  writeConfigFile(current)
+  await prisma.remote.delete({ where: { name } }).catch(() => {})
+  await syncDbToConfigFile()
 }
 
 export async function testRemote(name: string): Promise<TestResult> {
@@ -242,7 +254,7 @@ export async function uploadFile(
 
   try {
     await runRcloneCommand("mkdir", dest)
-    await runRcloneCommand("copy", localPath, dest)
+    await runRcloneCommand("copy", localPath, dest, "--transfers", 8, "--drive-chunk-size", "64M")
     return { success: true }
   } catch (error) {
     return {
@@ -360,7 +372,7 @@ export async function uploadFileToRemote(remoteName: string, localPath: string, 
   const dest = `${remoteName}:${destPath}`
   try {
     await runRcloneCommand("mkdir", dest)
-    await runRcloneCommand("copy", localPath, dest)
+    await runRcloneCommand("copy", localPath, dest, "--transfers", 8, "--drive-chunk-size", "64M")
     return { success: true }
   } catch (error) {
     return {

@@ -28,6 +28,7 @@ export async function PUT(
       retentionDays: job.retentionDays,
       isActive: job.isActive,
       nextRun: job.nextRun,
+      destination: job.destination,
     })
   } catch (error) {
     if (error instanceof Error && error.message.includes("RecordNotFound")) {

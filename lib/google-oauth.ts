@@ -1,4 +1,5 @@
 import path from "path"
+import os from "os"
 import { spawn, type ChildProcess } from "child_process"
 import { randomBytes } from "crypto"
 import fs from "fs"
@@ -27,7 +28,7 @@ function getRcloneBinary(): string {
 function getConfigPath(): string {
   return (
     process.env.RCLONE_CONFIG_PATH ||
-    path.join(process.cwd(), "data", "rclone.conf")
+    path.join(os.tmpdir(), "backup-service-rclone.conf")
   )
 }
 

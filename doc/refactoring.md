@@ -13,11 +13,11 @@ Este documento descreve o **estado atual** do `backup-service`, o **alvo** funci
 | **Ações na UI** | Backup manual, testar conexão, criar/deletar databases e jobs, upload Google Drive — tudo real via API. |
 | **`app/api`** | REST completo: CRUD databases, jobs, runs, stats, settings, storage (remotes, OAuth, upload, files). |
 | **Worker** | `scripts/backup-worker.ts` — loop com polling a cada 30s, executa `pg_dump`, atualiza `BackupRun`, faz upload opcional ao Google Drive via rclone. |
-| **Storage** | Rclone wrapper (`lib/rclone.ts`) com spawn do binário embutido `rclone.js`, leitura/escrita direta de `rclone.conf` (INI), comandos: config, lsjson, lsd, about, mkdir, copy, cat, deletefile, purge, moveto. |
-| **Google OAuth** | `lib/google-oauth.ts` — fluxo via `rclone authorize "drive" --auth-no-open-browser`, extrai URL de `127.0.0.1:53682/auth?state=...` do stderr, aguarda processo finalizar com token no stdout. |
+| **Storage** | Rclone wrapper (`lib/rclone.ts`) com spawn do binário embutido `rclone.js`. Configs armazenadas no banco PostgreSQL (tabela `Remote`), sincronizadas para arquivo INI temporário em `/tmp/` antes de cada comando rclone. OAuth tokens refrescados pelo rclone são lidos de volta para o banco automaticamente. |
+| **Google OAuth** | `lib/google-oauth.ts` — fluxo via `rclone authorize "drive" --auth-no-open-browser`, extrai URL de `127.0.0.1:53682/auth?state=...` do stderr, aguarda processo finalizar com token no stdout. Usa o mesmo temp config path que o rclone wrapper. |
 | **File Manager** | Página `/storage/explorer` com breadcrumbs, listagem de arquivos/pastas, upload, nova pasta, renomear, deletar, download. Sidebar com link "Arquivos". |
-| **Settings** | `lib/settings.ts` — leitura/escrita de `data/settings.json` (defaultRemote, storageBackupPath). |
-| **Infra dev** | Build e lint OK; Docker Compose com PostgreSQL 16. |
+| **Settings** | `lib/settings.ts` — leitura/escrita da tabela `AppConfig` via Prisma (singleton). |
+| **Infra dev** | Build e lint OK; Docker Compose com PostgreSQL 16; configs de rclone e app no banco, não em arquivos locais. |
 | **`layout/`** | Cópia de referência do v0; excluída de `tsconfig` e `eslint` — candidata a remoção ou arquivamento quando não for mais necessária. |
 
 ---
@@ -88,7 +88,7 @@ Este documento descreve o **estado atual** do `backup-service`, o **alvo** funci
 
 ### Segredos e segurança
 
-- [x] **S.1** `data/rclone.conf` adicionado ao `.gitignore` — evitar commit de tokens OAuth reais.
+- [x] **S.1** Configs de rclone e app migradas para banco PostgreSQL — sem arquivos com tokens no diretório do projeto.
 - [ ] **S.2** Validar que nenhum token/secret vaza em logs do worker ou respostas de API.
 
 ---
@@ -98,9 +98,10 @@ Este documento descreve o **estado atual** do `backup-service`, o **alvo** funci
 - **`rclone.js` v0.6.6**: bundler CJS, sem tipos TypeScript. O binário ELF 64-bit estático está em `node_modules/rclone.js/bin/rclone`. Usar `path.resolve(process.cwd(), ...)` em vez de `require.resolve()` (Turbopack devolve path virtual `[project]/...`).
 - **`runRcloneCommand()`**: usa `spawn()` diretamente, não a Promise API do rclone.js (que rejeita qualquer saída em stderr).
 - **INI config**: lê e escreve `rclone.conf` diretamente com parser INI caseiro, sem usar `rclone config create` (que é interativo para Google Drive).
-- **`rclone authorize`**: inicia servidor HTTP em `127.0.0.1:53682`, redireciona para Google OAuth. Flag `--auth-no-open-browser` (não `--no-open-browser`).
+- **Config no banco**: `Remote` e `AppConfig` são tabelas PostgreSQL via Prisma. Antes de cada comando rclone, as configs são sincronizadas do banco para um arquivo INI temporário em `os.tmpdir()`. Depois do comando, o arquivo é lido de volta para capturar alterações feitas pelo rclone (ex.: refresh de token).
+- **`rclone authorize`**: inicia servidor HTTP em `127.0.0.1:53682`, redireciona para Google OAuth. Flag `--auth-no-open-browser` (não `--no-open-browser`). Usa o mesmo temp config path (`/tmp/backup-service-rclone.conf`).
 - **Google Drive backend**: não suporta `rclone config userinfo` — usar `lsd` ou `about` para testar conexão.
-- **Settings**: persistidos em `data/settings.json` via `lib/settings.ts` (não no banco Prisma).
+- **Settings**: persistidos na tabela `AppConfig` via Prisma (singleton com id `"singleton"`), não em arquivo.
 
 ---
 
@@ -132,3 +133,4 @@ Variáveis a documentar:
 | 2026-05-28 | Implementado file manager (explorer page, API de arquivos, sidebar "Arquivos") |
 | 2026-05-28 | Conectada página de Jobs e Settings às APIs reais |
 | 2026-05-28 | Adicionado data/settings.json ao .gitignore; seção de segredos e peculiaridades técnicas |
+| 2026-05-28 | Migrado rclone.conf e settings.json para banco PostgreSQL (tabelas Remote e AppConfig via Prisma) |

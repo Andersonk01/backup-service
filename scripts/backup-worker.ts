@@ -34,6 +34,12 @@ async function runBackup({ runId, databaseId }: BackupOptions) {
     console.log(`[${new Date().toISOString()}] Database: ${database.name} (${database.type})`)
     console.log(`[${new Date().toISOString()}] Connection: ${database.connectionUrl.replace(/:[^:]+@/, ':****@')}`)
 
+    // Lookup the job to determine destination
+    const job = await prisma.backupJob.findFirst({
+      where: { databaseId, isActive: true },
+    })
+    const destination = job?.destination || 'remote'
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const backupDir = path.join(process.cwd(), 'backups', database.name.replace(/[^a-zA-Z0-9]/g, '_'))
     const backupFile = path.join(backupDir, `backup-${timestamp}.dump`)
@@ -51,14 +57,15 @@ async function runBackup({ runId, databaseId }: BackupOptions) {
 
     console.log(`[${new Date().toISOString()}] Backup completed: ${backupFile} (${formatBytes(fileSize)})`)
 
-    // Upload to cloud storage if enabled
-    const uploadEnabled = process.env.STORAGE_UPLOAD_ENABLED === 'true'
-    let remotePath: string | undefined
+    let finalPath: string | undefined
+    let uploadedRemote: string | undefined
 
-    if (uploadEnabled) {
+    // Upload to cloud storage if destination is remote or both
+    if (destination === 'remote' || destination === 'both') {
       try {
         const remotes = await listRemotes()
         const defaultRemote = process.env.DEFAULT_RCLONE_REMOTE || remotes.find(r => r.type === 'drive')?.name
+        uploadedRemote = defaultRemote
 
         if (defaultRemote) {
           const storagePath = process.env.STORAGE_BACKUP_PATH || '/backups'
@@ -69,8 +76,8 @@ async function runBackup({ runId, databaseId }: BackupOptions) {
           const uploadResult = await uploadFile(backupFile, defaultRemote, destPath)
 
           if (uploadResult.success) {
-            remotePath = `${defaultRemote}:${destPath}`
-            console.log(`[${new Date().toISOString()}] Upload completed: ${remotePath}`)
+            finalPath = `${defaultRemote}:${destPath}`
+            console.log(`[${new Date().toISOString()}] Upload completed: ${finalPath}`)
           } else {
             console.error(`[${new Date().toISOString()}] Upload failed: ${uploadResult.error}`)
           }
@@ -82,11 +89,24 @@ async function runBackup({ runId, databaseId }: BackupOptions) {
       }
     }
 
+    // If destination is local only or upload wasn't configured, keep local path
+    if (!finalPath) {
+      finalPath = backupFile
+    }
+
+    // Clean up local file if uploaded successfully and destination is not 'both'
+    if (destination === 'remote' && uploadedRemote && finalPath?.startsWith(`${uploadedRemote}:`)) {
+      try {
+        await fs.unlink(backupFile)
+        console.log(`[${new Date().toISOString()}] Local file cleaned up: ${backupFile}`)
+      } catch { /* best effort */ }
+    }
+
     await prisma.backupRun.update({
       where: { id: runId },
       data: {
         status: 'success',
-        filePath: remotePath || backupFile,
+        filePath: finalPath,
         size: fileSize,
         finishedAt: new Date(),
         duration: Math.round((Date.now() - new Date(run.startedAt).getTime()) / 1000),

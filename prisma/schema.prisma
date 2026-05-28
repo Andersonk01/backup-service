@@ -29,6 +29,7 @@ model BackupJob {
   retentionDays Int       @default(7)
   isActive      Boolean   @default(true)
   nextRun       DateTime?
+  destination   String    @default("remote")
 
   database Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
 }
@@ -46,4 +47,18 @@ model BackupRun {
   duration     Int?
 
   database Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+}
+
+model Remote {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  type      String
+  config    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AppConfig {
+  id    String @id @default("singleton")
+  data  Json
 }

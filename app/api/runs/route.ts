@@ -49,22 +49,24 @@ export async function PATCH(request: Request) {
       let cleaned = 0
 
       for (const run of runs) {
-        if (run.filePath) {
-          try {
-            await fs.access(run.filePath)
-          } catch {
-            await prisma.backupRun.update({
-              where: { id: run.id },
-              data: {
-                status: 'failed',
-                filePath: null,
-                size: null,
-                error: 'Arquivo de backup não encontrado no disco',
-                finishedAt: run.finishedAt || new Date(),
-              },
-            })
-            cleaned++
-          }
+        if (!run.filePath) continue
+        const isRemotePath = run.filePath.includes(':')
+        if (isRemotePath) continue
+
+        try {
+          await fs.access(run.filePath)
+        } catch {
+          await prisma.backupRun.update({
+            where: { id: run.id },
+            data: {
+              status: 'failed',
+              filePath: null,
+              size: null,
+              error: 'Arquivo de backup não encontrado no disco',
+              finishedAt: run.finishedAt || new Date(),
+            },
+          })
+          cleaned++
         }
       }
 

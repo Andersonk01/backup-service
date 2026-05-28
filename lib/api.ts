@@ -118,6 +118,7 @@ export const jobsApi = {
     frequency: string
     time: string
     retentionDays: number
+    destination?: string
   }): Promise<BackupJob> {
     const res = await fetch('/api/jobs', {
       method: 'POST',

@@ -14,6 +14,8 @@ import {
   Plus,
   RefreshCw,
   Loader2,
+  HardDrive,
+  Cloud,
 } from "lucide-react"
 import { AppHeader } from "@/components/app-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -69,6 +71,24 @@ const frequencyColors: Record<string, string> = {
   weekly: "bg-warning/10 text-warning border-warning/20",
 }
 
+const destinationLabels: Record<string, string> = {
+  local: "Local",
+  remote: "Remoto",
+  both: "Local + Remoto",
+}
+
+const destinationIcons: Record<string, React.ReactNode> = {
+  local: <HardDrive className="h-3 w-3 mr-1" />,
+  remote: <Cloud className="h-3 w-3 mr-1" />,
+  both: <><HardDrive className="h-3 w-3 mr-0.5" /><Cloud className="h-3 w-3" /></>,
+}
+
+const destinationColors: Record<string, string> = {
+  local: "bg-secondary/50 text-foreground border-border",
+  remote: "bg-info/10 text-info border-info/20",
+  both: "bg-primary/10 text-primary border-primary/20",
+}
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<BackupJob[]>([])
   const [databases, setDatabases] = useState<Database[]>([])
@@ -79,6 +99,7 @@ export default function JobsPage() {
     frequency: "daily",
     time: "02:00",
     retentionDays: 7,
+    destination: "remote",
   })
 
   const fetchData = useCallback(async () => {
@@ -151,10 +172,11 @@ export default function JobsPage() {
         frequency: createData.frequency,
         time: createData.time,
         retentionDays: createData.retentionDays,
+        destination: createData.destination,
       })
       toast.success("Job criado com sucesso!")
       setCreateOpen(false)
-      setCreateData({ databaseId: "", frequency: "daily", time: "02:00", retentionDays: 7 })
+      setCreateData({ databaseId: "", frequency: "daily", time: "02:00", retentionDays: 7, destination: "remote" })
       fetchData()
     } catch {
       toast.error("Erro ao criar job")
@@ -259,6 +281,28 @@ export default function JobsPage() {
                     onChange={(e) => setCreateData({ ...createData, retentionDays: parseInt(e.target.value) || 7 })}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label>Destino do Backup</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["local", "remote", "both"] as const).map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setCreateData({ ...createData, destination: opt })}
+                        className={`flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs transition-colors ${
+                          createData.destination === opt
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border hover:border-primary/50 hover:bg-secondary/50"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1 text-sm">
+                          {destinationIcons[opt]}
+                        </span>
+                        <span>{destinationLabels[opt]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -349,6 +393,7 @@ export default function JobsPage() {
                       <TableHead className="text-muted-foreground">Banco de Dados</TableHead>
                       <TableHead className="text-muted-foreground">Frequência</TableHead>
                       <TableHead className="text-muted-foreground">Horário</TableHead>
+                      <TableHead className="text-muted-foreground">Destino</TableHead>
                       <TableHead className="text-muted-foreground">Retenção</TableHead>
                       <TableHead className="text-muted-foreground">Próxima Execução</TableHead>
                       <TableHead className="text-muted-foreground">Status</TableHead>
@@ -367,6 +412,14 @@ export default function JobsPage() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-foreground">{job.time}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={destinationColors[job.destination] || destinationColors.remote}>
+                            <span className="flex items-center">
+                              {destinationIcons[job.destination] || destinationIcons.remote}
+                              {destinationLabels[job.destination] || "Remoto"}
+                            </span>
+                          </Badge>
+                        </TableCell>
                         <TableCell className="text-foreground">{job.retentionDays} dias</TableCell>
                         <TableCell className="text-muted-foreground">
                           {job.nextRun && job.isActive

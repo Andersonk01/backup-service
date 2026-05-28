@@ -62,6 +62,7 @@ export const mockBackupJobs: BackupJob[] = [
     retentionDays: 7,
     isActive: true,
     nextRun: new Date('2024-05-05T02:00:00'),
+    destination: 'remote',
   },
   {
     id: '2',
@@ -71,6 +72,7 @@ export const mockBackupJobs: BackupJob[] = [
     retentionDays: 3,
     isActive: true,
     nextRun: new Date('2024-05-04T03:30:00'),
+    destination: 'both',
   },
   {
     id: '3',
@@ -80,6 +82,7 @@ export const mockBackupJobs: BackupJob[] = [
     retentionDays: 14,
     isActive: true,
     nextRun: new Date('2024-05-04T23:00:00'),
+    destination: 'local',
   },
   {
     id: '4',
@@ -88,6 +91,7 @@ export const mockBackupJobs: BackupJob[] = [
     time: '08:00',
     retentionDays: 30,
     isActive: false,
+    destination: 'remote',
   },
   {
     id: '5',
@@ -97,6 +101,7 @@ export const mockBackupJobs: BackupJob[] = [
     retentionDays: 5,
     isActive: true,
     nextRun: new Date('2024-05-05T00:00:00'),
+    destination: 'both',
   },
 ]
 

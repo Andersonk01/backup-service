@@ -23,6 +23,7 @@ export interface BackupJob {
   retentionDays: number
   isActive: boolean
   nextRun?: Date
+  destination: string
 }
 
 export interface BackupRun {
