@@ -41,7 +41,7 @@ function ensureConfigDir(): void {
   const configPath = getConfigPath()
   const dir = path.dirname(configPath)
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
 }
 
@@ -61,7 +61,7 @@ async function syncDbToConfigFile(): Promise<void> {
     lines.push("")
   }
 
-  fs.writeFileSync(configPath, lines.join("\n"), "utf-8")
+  fs.writeFileSync(configPath, lines.join("\n"), { encoding: "utf-8", mode: 0o600 })
 }
 
 async function syncConfigFileToDb(): Promise<void> {

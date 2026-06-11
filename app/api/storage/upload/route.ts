@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { uploadFile } from "@/lib/rclone"
 import { promises as fs } from "fs"
+import path from "path"
 
 export async function POST(request: Request) {
   try {
@@ -14,8 +15,18 @@ export async function POST(request: Request) {
       )
     }
 
+    const resolvedBackupsDir = path.resolve(process.cwd(), "backups")
+    const resolvedLocalPath = path.resolve(localPath)
+
+    if (!resolvedLocalPath.startsWith(resolvedBackupsDir)) {
+      return NextResponse.json(
+        { error: "Access denied: Local path must be within the backups directory" },
+        { status: 403 }
+      )
+    }
+
     const exists = await fs
-      .access(localPath)
+      .access(resolvedLocalPath)
       .then(() => true)
       .catch(() => false)
 
@@ -26,7 +37,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const result = await uploadFile(localPath, remote, remotePath || "")
+    const result = await uploadFile(resolvedLocalPath, remote, remotePath || "")
     return NextResponse.json(result)
   } catch (error) {
     return NextResponse.json(

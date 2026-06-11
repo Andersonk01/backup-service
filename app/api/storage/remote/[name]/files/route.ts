@@ -61,7 +61,8 @@ export async function POST(
       const tmpDir = path.join(process.cwd(), "data", "tmp")
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
 
-      const tmpName = `${randomBytes(8).toString("hex")}-${file.name}`
+      const safeFileName = path.basename(file.name)
+      const tmpName = `${randomBytes(8).toString("hex")}-${safeFileName}`
       const tmpPath = path.join(tmpDir, tmpName)
       const buffer = Buffer.from(await file.arrayBuffer())
       fs.writeFileSync(tmpPath, buffer)

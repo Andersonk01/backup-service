@@ -140,16 +140,33 @@ async function runBackup({ runId, databaseId }: BackupOptions) {
 }
 
 async function runPostgresBackup(connectionUrl: string, outputFile: string) {
-  const { stdout, stderr } = await execAsync(
-    `pg_dump -Fc -f "${outputFile}" "${connectionUrl}"`,
-    { timeout: 300000 }
-  )
+  // Use spawn to execute pg_dump safely without passing through a shell, preventing Command Injection
+  const { spawn } = await import('child_process')
+  
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn('pg_dump', ['-Fc', '-f', outputFile, connectionUrl], {
+      timeout: 300000
+    })
 
-  if (stderr && !stderr.includes('WARNING')) {
-    console.warn('pg_dump stderr:', stderr)
-  }
+    let stderr = ''
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
 
-  console.log('pg_dump completed')
+    child.on('error', reject)
+
+    child.on('close', (code) => {
+      if (stderr && !stderr.includes('WARNING')) {
+        console.warn('pg_dump stderr:', stderr)
+      }
+      if (code === 0) {
+        console.log('pg_dump completed')
+        resolve()
+      } else {
+        reject(new Error(stderr.trim() || `pg_dump exited with code ${code}`))
+      }
+    })
+  })
 }
 
 function formatBytes(bytes: number): string {

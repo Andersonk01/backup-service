@@ -27,9 +27,32 @@ export async function PUT(
   try {
     const { id } = await params
     const body = await request.json()
+    
+    // Protect against Mass-Assignment: Destructure only allowed properties
+    const { name, type, isActive, connectionUrl, host, port, database, username, password } = body
+    
+    const updateData: Record<string, any> = {}
+    if (name !== undefined) updateData.name = name
+    if (type !== undefined) updateData.type = type
+    if (isActive !== undefined) updateData.isActive = isActive
+    
+    // If specific connection fields are provided, rebuild the connectionUrl securely.
+    // Otherwise, if connectionUrl is supplied directly, we perform a validation to avoid injecting
+    // malicious parameters.
+    if (username !== undefined && password !== undefined && host !== undefined && port !== undefined && database !== undefined) {
+      updateData.connectionUrl = `postgresql://${username}:${password}@${host}:${port}/${database}`
+    } else if (connectionUrl !== undefined) {
+      // Allow connectionUrl directly only if it's a valid URI structure
+      if (typeof connectionUrl === 'string' && connectionUrl.startsWith('postgresql://')) {
+        updateData.connectionUrl = connectionUrl
+      } else {
+        return NextResponse.json({ error: 'Invalid connectionUrl structure' }, { status: 400 })
+      }
+    }
+
     const db = await prisma.database.update({
       where: { id },
-      data: body,
+      data: updateData,
     })
     return NextResponse.json(db)
   } catch (error) {
